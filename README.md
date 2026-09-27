@@ -99,6 +99,18 @@ powershell -ExecutionPolicy Bypass -File hojou/scripts/setup-git-safety-settings
 すべての実行モード・設定で確認プロンプトが表示されることを保証するものではありません。導入後は、使用する環境と実行モードで意図した確認が行われるか確認してください。
 詳細は[setup-git-safety-settings.ps1](scripts/setup-git-safety-settings.ps1)と[Claude Codeの権限ドキュメント](https://code.claude.com/docs/en/permissions)を参照してください。
 
+## 任意設定：作業ログの自動記録
+
+Claude Codeの`.claude/settings.json`に、タスク毎引継ぎ資料の作業ログ（[引継書ルール](運用ルール/引継書ルール/引継書ルール.md)「作業時間の計測」）を自動で記録するhookを追加できます。
+
+```powershell
+powershell -ExecutionPolicy Bypass -File hojou/scripts/setup-worklog-hooks.ps1
+```
+
+既存設定を読み込み、未登録のhookを追加して保存するスクリプトです。
+hookは、ユーザーの返事待ちを除いたAIの作業区間を記録し、タスク毎引継ぎ資料がWriteツール・Editツールで保存された時に作業ログへ書き込みます。権限確認の待ち時間は除けない等の限界があります。導入後は、タスク毎引継ぎ資料を保存して作業ログが書き込まれることを確認してください。
+詳細は[worklog-hook.ps1](scripts/worklog-hook.ps1)と[Claude Codeのhooksドキュメント](https://code.claude.com/docs/en/hooks)を参照してください。
+
 ## 更新方法
 
 利用側プロジェクトで、取り込む変更を確認したうえでサブモジュールを更新します。
@@ -125,6 +137,8 @@ AIエージェント指示書.md   … AIエージェント向けの入口（利
 scripts/
   setup-skills-link.ps1              … Skill参照設定スクリプト（上記「導入手順」参照）
   setup-git-safety-settings.ps1      … git操作安全設定の導入スクリプト（上記「任意設定」参照）
+  setup-worklog-hooks.ps1            … 作業ログ自動記録の導入スクリプト（上記「任意設定」参照）
+  worklog-hook.ps1                   … 作業ログを記録するhook本体
 変更依頼/                … 依頼方法・対応履歴
 LICENSE                  … ライセンス
 ```

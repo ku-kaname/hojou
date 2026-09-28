@@ -68,7 +68,7 @@ import ...
 # - get_user_endpoint : ユーザー情報取得
 # - get_all_user_endpoint : 全ユーザー情報取得
 
-# 設計書：review-scheduler\設計書\サーバー処理（main）\ユーザー操作
+# 設計書：review-scheduler/設計書/サーバー処理（main）/ユーザー操作
 # ====================================================================================================
 
 def create_user_endpoint():
@@ -89,7 +89,7 @@ def get_all_user_endpoint():
 # - delete_review_endpoint : 復習項目削除
 # - get_reviews_endpoint : 復習項目取得
 
-# 設計書：review-scheduler\設計書\サーバー処理（main）\復習項目操作
+# 設計書：review-scheduler/設計書/サーバー処理（main）/復習項目操作
 # ====================================================================================================
 
 @app.patch("/users/{user_id}/reviews/{review_id}")
@@ -101,7 +101,7 @@ def update_review_endpoint(
     """
     復習項目更新
 
-    設計書：review-scheduler\設計書\サーバー処理（main）\復習項目操作\復習項目更新.md
+    設計書：review-scheduler/設計書/サーバー処理（main）/復習項目操作/復習項目更新.md
     
     【処理概要】
     - 登録済み復習情報と復習管理情報に対して、ユーザーが入力した情報でテーブルを更新する。

@@ -49,7 +49,7 @@ public class Main {
      * - getUserEndpoint : ユーザー情報取得
      * - getAllUserEndpoint : 全ユーザー情報取得
      *
-     * 設計書：review-scheduler\設計書\サーバー処理（main）\ユーザー操作
+     * 設計書：review-scheduler/設計書/サーバー処理（main）/ユーザー操作
      * ==================================================
      */
 
@@ -66,14 +66,14 @@ public class Main {
      * - deleteReviewEndpoint : 復習項目削除
      * - getReviewsEndpoint : 復習項目取得
      *
-     * 設計書：review-scheduler\設計書\サーバー処理（main）\復習項目操作
+     * 設計書：review-scheduler/設計書/サーバー処理（main）/復習項目操作
      * ==================================================
      */
 
     /**
      * 復習項目更新
      *
-     * 設計書：review-scheduler\設計書\サーバー処理（main）\復習項目操作\復習項目更新.md
+     * 設計書：review-scheduler/設計書/サーバー処理（main）/復習項目操作/復習項目更新.md
      *
      * 【処理概要】
      * - 登録済み復習情報と復習管理情報に対して、ユーザーが入力した情報でテーブルを更新する。

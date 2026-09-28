@@ -108,8 +108,8 @@ powershell -ExecutionPolicy Bypass -File hojou/scripts/setup-worklog-hooks.ps1
 ```
 
 既存設定を読み込み、未登録のhookを追加して保存するスクリプトです。
-hookは、ユーザーの返事待ちを除いたAIの作業区間を記録し、タスク毎引継ぎ資料がWriteツール・Editツールで保存された時に作業ログへ書き込みます。権限確認の待ち時間は除けない等の限界があります。導入後は、タスク毎引継ぎ資料を保存して作業ログが書き込まれることを確認してください。
-詳細は[worklog-hook.ps1](scripts/worklog-hook.ps1)と[Claude Codeのhooksドキュメント](https://code.claude.com/docs/en/hooks)を参照してください。
+hookは、ユーザーの返事待ちを除いたAIの作業区間を秒単位で記録し、セッションの開始時等にセッションIDを会話へ出力します。AIは、タスク毎引継ぎ資料をコミットする直前に[worklog-record.ps1](scripts/worklog-record.ps1)を実行し、記録された作業区間を作業ログへ書き込みます。権限確認の待ち時間は除けない等の限界があります。導入後は、新しいセッションを開始してセッションIDが出力されることと、worklog-record.ps1で作業ログが書き込まれることを確認してください。
+詳細は[worklog-hook.ps1](scripts/worklog-hook.ps1)・[worklog-record.ps1](scripts/worklog-record.ps1)と[Claude Codeのhooksドキュメント](https://code.claude.com/docs/en/hooks)を参照してください。
 
 ## 更新方法
 
@@ -138,7 +138,9 @@ scripts/
   setup-skills-link.ps1              … Skill参照設定スクリプト（上記「導入手順」参照）
   setup-git-safety-settings.ps1      … git操作安全設定の導入スクリプト（上記「任意設定」参照）
   setup-worklog-hooks.ps1            … 作業ログ自動記録の導入スクリプト（上記「任意設定」参照）
-  worklog-hook.ps1                   … 作業ログを記録するhook本体
+  worklog-hook.ps1                   … 作業ログの作業区間を記録するhook本体
+  worklog-record.ps1                 … 記録した作業区間を作業ログへ書き込むスクリプト（AIがコミットの直前に実行）
+  worklog-common.ps1                 … 上記2つの共通処理
 変更依頼/                … 依頼方法・対応履歴
 LICENSE                  … ライセンス
 ```

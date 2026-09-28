@@ -1,11 +1,11 @@
-﻿# worklog-hook.ps1が記録した作業区間を、タスク毎引継ぎ資料
+﻿# Claude Codeの会話記録（transcript）から作業区間を求め、タスク毎引継ぎ資料
 # （引継ぎ資料/タスク毎/<バックログ名称>_<タスク名>_引継書.md）の「## 作業ログ」へ書き込む。
 # AIが、タスク毎引継ぎ資料をコミットする直前に実行する。
 #
 # 背景：
-# - hookでは、作業区間をどのタスクの作業ログへ書き込むかが分からない。タスク毎引継ぎ資料の保存時に
-#   書き込むと、保存からコミットまでの作業区間が、次に保存した（別のタスクの）引継ぎ資料へ書き込まれる。
-#   そのため、書き込み先と書き込むタイミングを、AIがこのスクリプトの実行で指定する。
+# - 作業区間をどのタスクの作業ログへ書き込むかは、会話記録からは分からない。タスク毎引継ぎ資料の
+#   保存時に書き込むと、保存からコミットまでの作業区間が、次に保存した（別のタスクの）引継ぎ資料へ
+#   書き込まれる。そのため、書き込み先と書き込むタイミングを、AIがこのスクリプトの実行で指定する。
 # - 時刻を分単位に丸めると、タスクを切り替えた時に前後のタスクの作業ログの行が重なり、
 #   作業コスト計測ツールで二重に計上されるため、秒単位で書き込む。
 #
@@ -14,8 +14,16 @@
 #   powershell -NoProfile -ExecutionPolicy Bypass -File hojou/scripts/worklog-record.ps1 -SessionId <セッションID> -Path "<タスク毎引継ぎ資料のパス>"
 #
 # 動作：
-# - 実行した時点で開いている作業区間は、その時刻で終了し、同じ時刻から次の作業区間を開始する。
-# - そのセッションで前回の書き込み以降に記録した作業区間を、「## 作業ログ」の末尾へ
+# - 会話記録（パスはworklog-hook.ps1がセッションの開始時に保存する。保存したパスになければ、
+#   Claude Codeの設定フォルダ（環境変数CLAUDE_CONFIG_DIR、なければ~/.claude）のprojects/から探す）の、
+#   前回の書き込み以降の部分から、次のように作業区間を求める。
+#   - ユーザーの発言（ツールの実行結果・要約・中断の記録等を除く）から、AIの応答・ツールの実行結果の
+#     うち次の発言より前の最後のものまでを、1つの作業区間とする（発言の間の返事待ちを除くため）。
+#   - AskUserQuestion（選択式の質問）を呼んでから回答されるまでは、作業区間から除く。
+#   - 実行した時点の作業区間は、実行した時刻で終了する（実行はAIの応答中に行うため）。
+#     それ以降の作業区間は、次の実行時に、実行した時刻から続けて求める。
+#   - 時刻はローカル時刻に直し、秒未満を切り捨てる。
+# - 求めた作業区間を、「## 作業ログ」の末尾へ
 #   「- 開始: yyyy-mm-dd hh:mm:ss / 終了: yyyy-mm-dd hh:mm:ss」の形式で書き込み、書き込んだ行を表示する。
 # - 長さ0の作業区間は書き込まない。重なる・接する（終了と次の開始が同じ時刻の）作業区間は1行にまとめる。
 #   直前の作業ログの行が同じ形式であれば、その行もまとめる対象に含める（分単位の行等は変更しない）。
@@ -24,7 +32,13 @@
 # - 書き込む作業区間がなければ、タスク毎引継ぎ資料は変更しない。
 #
 # 限界（必ず確認すること）：
-# - 指定したセッションの記録がない場合（hookが未導入・セッションIDの誤り等）は、エラーで終了する。
+# - 権限確認（ツール実行の許可）の待ち時間は、作業区間から除けない。
+# - 実行した後の作業区間（コミット・最後の返答等）は、同じセッションで次に実行した時に書き込まれる。
+#   実行しないままセッションを終えた（/clear等）場合、残りの作業区間は書き込まれない。
+# - 会話記録の形式はClaude Codeの内部の形式であり、公開された仕様ではない。Claude Codeの更新で
+#   形式が変わると、作業区間を正しく求められなくなる可能性がある。会話記録が見つからない場合は、
+#   エラーで終了する。
+# - 指定したセッションの保存内容がない場合（hookが未導入・セッションIDの誤り等）は、エラーで終了する。
 # - 1回の実行で、前回の書き込み以降のすべての作業区間を書き込む。前回の書き込み以降に
 #   複数のタスクの作業をした場合も、指定したタスク毎引継ぎ資料へまとめて書き込む。
 #
@@ -67,11 +81,209 @@ function Resolve-HandoffPath([string]$filePath) {
     return $fullPath
 }
 
+# 会話記録のパス。保存したパスになければ、Claude Codeの設定フォルダのprojects/から探す
+function Resolve-TranscriptPath([string]$savedPath) {
+    if (-not [string]::IsNullOrEmpty($savedPath) -and (Test-Path -LiteralPath $savedPath -PathType Leaf)) {
+        return $savedPath
+    }
+    $configDir = $env:CLAUDE_CONFIG_DIR
+    if ([string]::IsNullOrEmpty($configDir)) {
+        $configDir = Join-Path ([Environment]::GetFolderPath("UserProfile")) ".claude"
+    }
+    $projectsDir = Join-Path $configDir "projects"
+    if (Test-Path -LiteralPath $projectsDir -PathType Container) {
+        foreach ($projectDir in (Get-ChildItem -LiteralPath $projectsDir -Directory)) {
+            $candidate = Join-Path $projectDir.FullName ($SessionId + ".jsonl")
+            if (Test-Path -LiteralPath $candidate -PathType Leaf) {
+                return $candidate
+            }
+        }
+    }
+    throw ("このセッションの会話記録が見つかりません: " + $SessionId)
+}
+
+# 会話記録の時刻（UTC等）をローカル時刻に直し、秒未満を切り捨てる
+function ConvertFrom-TranscriptTime([string]$text) {
+    $time = [DateTimeOffset]::Parse($text, $invariantCulture).LocalDateTime
+    return $time.AddTicks(-($time.Ticks % [TimeSpan]::TicksPerSecond))
+}
+
+function Open-Segment($track, [DateTime]$time) {
+    if ($time -lt $track.last) {
+        $time = $track.last
+    }
+    $track.open = $time
+    $track.last = $time
+}
+
+function Add-Activity($track, [DateTime]$time) {
+    if ($time -gt $track.last) {
+        $track.last = $time
+    }
+}
+
+# 開いている作業区間を、最後の応答・ツールの実行結果の時刻で終了する
+function Close-Segment($track) {
+    if ($null -ne $track.open) {
+        $track.segments.Add(@{ start = $track.open; end = $track.last })
+        $track.open = $null
+    }
+}
+
+function Get-ContentBlocks($message) {
+    if ($null -eq $message) {
+        return @()
+    }
+    $content = $message["content"]
+    if ($content -is [System.Array]) {
+        return $content
+    }
+    return @()
+}
+
+# ユーザーの発言か（ツールの実行結果・要約・スキル等の自動の追加・中断の記録を除く）
+function Test-UserPrompt($entry, $message, $blocks) {
+    if ($entry["isMeta"] -eq $true -or $entry["isCompactSummary"] -eq $true -or $null -eq $message) {
+        return $false
+    }
+    $content = $message["content"]
+    if ($content -is [string]) {
+        return (-not $content.StartsWith("[Request interrupted"))
+    }
+    foreach ($block in $blocks) {
+        if ($block["type"] -eq "text" -and ([string]$block["text"]).StartsWith("[Request interrupted")) {
+            return $false
+        }
+    }
+    return $true
+}
+
+# 会話記録の1件を、作業区間に反映する
+function Add-TranscriptEntry($track, $entry) {
+    $type = $entry["type"]
+    if (($type -ne "user" -and $type -ne "assistant") -or $null -eq $entry["timestamp"]) {
+        return
+    }
+    $time = ConvertFrom-TranscriptTime ([string]$entry["timestamp"])
+    if ($time -lt $track.recorded) {
+        return
+    }
+    if ($time -gt $track.now) {
+        $time = $track.now
+    }
+    $message = $entry["message"]
+    $blocks = @(Get-ContentBlocks $message)
+
+    if ($type -eq "assistant") {
+        # APIエラー等でClaude Code自身が作る応答は、AIの作業ではないため除く。
+        # 選択式の質問の回答待ちの間の応答（同じ応答の後続部分等）も、作業区間を開かない
+        if (($null -ne $message -and $message["model"] -eq "<synthetic>") -or $track.asks.Count -gt 0) {
+            return
+        }
+        if ($null -eq $track.open) {
+            Open-Segment $track $time
+        } else {
+            Add-Activity $track $time
+        }
+        foreach ($block in $blocks) {
+            if ($block["type"] -eq "tool_use" -and $block["name"] -eq "AskUserQuestion") {
+                $track.asks[[string]$block["id"]] = $true
+            }
+        }
+        if ($track.asks.Count -gt 0) {
+            Close-Segment $track
+        }
+        return
+    }
+
+    $results = @($blocks | Where-Object { $_["type"] -eq "tool_result" })
+    if ($results.Count -gt 0) {
+        $answered = $false
+        foreach ($result in $results) {
+            $toolUseId = [string]$result["tool_use_id"]
+            if ($track.asks.ContainsKey($toolUseId)) {
+                $track.asks.Remove($toolUseId)
+                $answered = $true
+            }
+        }
+        if ($track.asks.Count -gt 0) {
+            return
+        }
+        if ($null -ne $track.open) {
+            Add-Activity $track $time
+        } elseif ($answered) {
+            Open-Segment $track $time
+        }
+        return
+    }
+    if (Test-UserPrompt $entry $message $blocks) {
+        $track.asks.Clear()
+        Close-Segment $track
+        Open-Segment $track $time
+    }
+}
+
+# 会話記録のoffset（バイト）以降の完全な行を読んで作業区間を求め、読み終えた位置を返す
+function Read-Transcript($track, [string]$transcriptPath, [long]$offset) {
+    Add-Type -AssemblyName System.Web.Extensions
+    $serializer = New-Object System.Web.Script.Serialization.JavaScriptSerializer
+    $serializer.MaxJsonLength = [int]::MaxValue
+    $serializer.RecursionLimit = 1000
+
+    $share = [System.IO.FileShare]::ReadWrite -bor [System.IO.FileShare]::Delete
+    $stream = New-Object System.IO.FileStream($transcriptPath, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, $share)
+    try {
+        # 読み終えた位置が行の区切りでなければ（会話記録が書き直された等）、先頭から読む
+        if ($offset -gt $stream.Length) {
+            $offset = 0
+        }
+        if ($offset -gt 0) {
+            [void]$stream.Seek($offset - 1, [System.IO.SeekOrigin]::Begin)
+            if ($stream.ReadByte() -ne 10) {
+                $offset = 0
+            }
+        }
+        [void]$stream.Seek($offset, [System.IO.SeekOrigin]::Begin)
+        $position = $offset
+        $buffer = New-Object byte[] 1048576
+        $pending = New-Object System.IO.MemoryStream
+        while (($read = $stream.Read($buffer, 0, $buffer.Length)) -gt 0) {
+            $start = 0
+            while ($start -lt $read) {
+                $index = [Array]::IndexOf($buffer, [byte]10, $start, $read - $start)
+                if ($index -lt 0) {
+                    $pending.Write($buffer, $start, $read - $start)
+                    break
+                }
+                $pending.Write($buffer, $start, $index - $start)
+                $line = $utf8.GetString($pending.GetBuffer(), 0, [int]$pending.Length)
+                $position += $pending.Length + 1
+                $pending.SetLength(0)
+                $start = $index + 1
+                if (-not ($line.Contains('"type":"user"') -or $line.Contains('"type":"assistant"'))) {
+                    continue
+                }
+                try {
+                    $entry = $serializer.DeserializeObject($line)
+                } catch {
+                    continue
+                }
+                if ($entry -is [System.Collections.Generic.Dictionary[string, object]]) {
+                    Add-TranscriptEntry $track $entry
+                }
+            }
+        }
+    } finally {
+        $stream.Dispose()
+    }
+    return $position
+}
+
 # 作業区間を行にし、重なる・接する行をまとめる（長さ0の作業区間は除く）
 function Merge-LogRows($rows, $segments) {
     foreach ($segment in $segments) {
-        $rowStart = ConvertTo-Time $segment.start $timeFormat
-        $rowEnd = ConvertTo-Time $segment.end $timeFormat
+        $rowStart = $segment.start
+        $rowEnd = $segment.end
         if ($rowEnd -le $rowStart) {
             continue
         }
@@ -209,21 +421,36 @@ function Invoke-WorklogRecord {
         throw ("セッションIDが不正です: " + $SessionId)
     }
     if (-not (Test-Path -LiteralPath $statePath)) {
-        throw ("このセッションの作業区間の記録がありません（hookが導入されていないか、セッションIDが誤っています）: " + $SessionId)
+        throw ("このセッションの記録がありません（SessionStartのhookが導入されていないか、セッションIDが誤っています）: " + $SessionId)
     }
     $handoffPath = Resolve-HandoffPath $Path
 
     $state = Read-State $statePath
-    $nowText = Get-NowText
-    if ($null -ne $state.open) {
-        Close-Segment $state $nowText
-        $state.open = $nowText
+    if ([string]::IsNullOrEmpty($state.recorded)) {
+        throw ("このセッションの記録に前回書き込んだ時刻がありません: " + $statePath)
     }
-    $state.last = $nowText
+    $transcriptPath = Resolve-TranscriptPath $state.transcript
+    $nowText = Get-NowText
+    $now = ConvertTo-Time $nowText $timeFormat
+    $recorded = ConvertTo-Time $state.recorded $timeFormat
 
-    $rowTexts = @(Write-WorkLog $handoffPath $state.segments)
-    $state.segments = @()
-    Write-State $statePath $state
+    # 前回の書き込みはAIの応答中に行うため、作業区間が開いた状態から求め始める
+    $track = @{
+        recorded = $recorded
+        now      = $now
+        open     = $recorded
+        last     = $recorded
+        asks     = @{}
+        segments = New-Object System.Collections.Generic.List[object]
+    }
+    $offset = Read-Transcript $track $transcriptPath $state.offset
+    if ($null -ne $track.open) {
+        Add-Activity $track $now
+        Close-Segment $track
+    }
+
+    $rowTexts = @(Write-WorkLog $handoffPath $track.segments)
+    Write-State $statePath @{ transcript = $transcriptPath; recorded = $nowText; offset = $offset }
 
     $relativePath = $handoffPath.Substring(([System.IO.Path]::GetFullPath($repoRoot).TrimEnd('\', '/')).Length + 1)
     if ($rowTexts.Count -eq 0) {

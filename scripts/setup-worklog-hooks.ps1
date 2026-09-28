@@ -1,9 +1,9 @@
-﻿# タスク毎引継ぎ資料の「## 作業ログ」へ書き込む作業区間を自動で記録するClaude Codeのhook
-# （worklog-hook.ps1）の設定を、利用側プロジェクトの.claude/settings.jsonへマージする。
+﻿# 作業ログの自動記録に使うClaude CodeのSessionStartのhook（worklog-hook.ps1）の設定を、
+# 利用側プロジェクトの.claude/settings.jsonへマージする。
 #
 # 背景：
 # - 引継書ルール「作業時間の計測」の作業ログは、AIが記載すると形式の誤りや記載漏れが起きる。
-#   hookで記録することで、AIの記載に頼らずに作業ログを残す（任意設定）。
+#   会話記録から作業区間を求めることで、AIの記載に頼らずに作業ログを残す（任意設定）。
 # - .claude/settings.jsonは利用側プロジェクト固有の他設定（permissions・他のhooks・env等）と
 #   共存する必要があるため、既存設定は変更せず、未設定のhookのみを追記するマージ処理を行う。
 #
@@ -16,9 +16,9 @@
 # 限界（必ず確認すること）：
 # - hookはClaude Codeでのみ動作する。Codex等の他のAIエージェントでは、引継書ルールに従い
 #   AIが作業ログを記載する。
-# - 作業区間の記録方法と限界は、worklog-hook.ps1の冒頭を、作業ログへの書き込み方法は、
+# - hookの動作は、worklog-hook.ps1の冒頭を、作業区間の求め方・作業ログへの書き込み方法と限界は、
 #   worklog-record.ps1の冒頭を参照すること。
-# - 実際に作業区間が記録されるかは、使用しているClaude Codeのバージョン、および
+# - 実際にhookが動くかは、使用しているClaude Codeのバージョン、および
 #   .claude/settings.local.json等の他の設定ファイルとの組み合わせに依存するため、
 #   導入後に新しいセッションを開始し、セッションIDが会話へ出力されることと、
 #   worklog-record.ps1で作業ログが書き込まれることを確認すること。
@@ -33,14 +33,9 @@ $submoduleName = Split-Path -Leaf $submoduleRoot
 $hookScriptName = "worklog-hook.ps1"
 $hookScriptPath = '${CLAUDE_PROJECT_DIR}/' + $submoduleName + "/scripts/" + $hookScriptName
 
-# hookの種類ごとの対象ツール（matcher）。$nullはmatcherを指定しない（すべてが対象）
+# hookの種類ごとの対象（matcher）。$nullはmatcherを指定しない（すべてが対象）
 $requiredHooks = [ordered]@{
-    "SessionStart"       = $null
-    "UserPromptSubmit"   = $null
-    "PreToolUse"         = "AskUserQuestion"
-    "PostToolUse"        = "AskUserQuestion|Write|Edit"
-    "PostToolUseFailure" = "AskUserQuestion"
-    "Stop"               = $null
+    "SessionStart" = $null
 }
 
 function New-HookGroup($matcher) {

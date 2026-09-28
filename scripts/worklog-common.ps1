@@ -1,9 +1,9 @@
 ﻿# 作業ログの自動記録（worklog-hook.ps1・worklog-record.ps1）で共通に使う処理。
 # 両スクリプトから読み込んで（ドットソースで）使い、単独では実行しない。
 #
-# 記録途中の作業区間は、セッションごとに一時フォルダ（%TEMP%\hojou-worklog\<セッションID>.json）へ
-# {open: 開いている作業区間の開始, last: 最後にhookが動いた時刻, segments: 終了した作業区間}の形で保存する。
-# 時刻はいずれもローカル時刻のyyyy-MM-ddTHH:mm:ss。
+# セッションごとに一時フォルダ（%TEMP%\hojou-worklog\<セッションID>.json）へ、
+# {transcript: 会話記録のパス, recorded: 前回書き込んだ時刻, offset: 会話記録の読み終えた位置（バイト）}の形で保存する。
+# recordedはローカル時刻のyyyy-MM-ddTHH:mm:ss。
 #
 # テスト用に、環境変数HOJOU_WORKLOG_NOW（yyyy-MM-ddTHH:mm:ss）で現在時刻を指定できる。
 
@@ -40,20 +40,13 @@ function Get-StatePath([string]$sessionId) {
 }
 
 function Read-State([string]$statePath) {
-    $state = @{ open = $null; last = $null; segments = @() }
-    if (-not (Test-Path -LiteralPath $statePath)) {
-        return $state
-    }
     $raw = [System.IO.File]::ReadAllText($statePath, $utf8)
     $saved = $raw | ConvertFrom-Json
-    $state.open = $saved.open
-    $state.last = $saved.last
-    foreach ($segment in @($saved.segments)) {
-        if ($null -ne $segment) {
-            $state.segments += @{ start = $segment.start; end = $segment.end }
-        }
+    $offset = [long]0
+    if ($null -ne $saved.offset) {
+        $offset = [long]$saved.offset
     }
-    return $state
+    return @{ transcript = [string]$saved.transcript; recorded = [string]$saved.recorded; offset = $offset }
 }
 
 function Write-State([string]$statePath, $state) {
@@ -74,18 +67,6 @@ function Remove-OldState([string]$stateDir) {
     foreach ($oldFile in $oldFiles) {
         Remove-Item -LiteralPath $oldFile.FullName -Force
     }
-}
-
-# 開いている作業区間を終了し、記録済みの作業区間に加える
-function Close-Segment($state, [string]$endText) {
-    if ($null -eq $state.open) {
-        return
-    }
-    if ([string]::CompareOrdinal($endText, $state.open) -lt 0) {
-        $endText = $state.open
-    }
-    $state.segments += @{ start = $state.open; end = $endText }
-    $state.open = $null
 }
 
 # 文字コードの設定に左右されないよう、UTF-8のバイト列で標準出力・標準エラー出力へ書き込む

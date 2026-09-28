@@ -1,32 +1,25 @@
-﻿# Claude Codeのhookとして、AIの作業区間（ユーザーの返事待ちを除く）を秒単位で記録する。
-# 記録した作業区間は、AIがコミットの直前にworklog-record.ps1を実行した時に、
-# 指定したタスク毎引継ぎ資料の「## 作業ログ」へ書き込まれる。
+﻿# Claude CodeのSessionStartのhookとして、セッションIDと会話記録（transcript）のパスを保存し、
+# セッションIDとworklog-record.ps1の実行方法を会話へ出力する。
+# 作業区間は、AIがコミットの直前にworklog-record.ps1を実行した時に会話記録から求め、
+# 指定したタスク毎引継ぎ資料の「## 作業ログ」へ書き込む。
 #
 # 背景：
 # - 引継書ルール「作業時間の計測」では、作業ログの開始・終了時刻をAIが記載するが、
 #   AIの記載では、形式の誤り（日付のみ・「頃」等）や開始時刻の抜けが起きる。
-#   hookで記録することで、AIの記載に頼らずに作業ログを残す。
-# - 書き込み先のタスク毎引継ぎ資料はhookでは決められないため、書き込みはworklog-record.ps1で行う。
+#   会話記録の時刻から求めることで、AIの記載に頼らずに作業ログを残す。
+# - 会話記録には、ユーザーの発言・AIの応答・ツールの実行結果が時刻とともに残るため、
+#   発言ごと・ツールの実行ごとのhookで時刻を記録する必要はない。hookは、worklog-record.ps1が
+#   会話記録を探すためのパスの保存と、AIへのセッションIDの伝達のみを行う。
 #
-# 動作（hookの種類ごと。hookの登録はsetup-worklog-hooks.ps1で行う）：
-# - SessionStart（セッションの開始・再開・/clear・要約の後）：セッションIDと、
-#   worklog-record.ps1の実行方法を会話へ出力する。作業区間は変更しない。
-# - UserPromptSubmit（ユーザーの発言時）：作業区間を開始する。
-# - PreToolUse（AskUserQuestionの直前）：作業区間を終了する（回答待ちを除くため）。
-# - PostToolUse・PostToolUseFailure（AskUserQuestionの後）：作業区間を開始する。
-# - Stop（AIの応答の終了時）：作業区間を終了する。
-# - PostToolUse（Write・Editの後）：最後にこのhookが動いた時刻のみを更新する
-#   （応答が中断された場合の、作業区間の終了時刻に使う）。
-# - 記録途中の作業区間は、セッションごとに一時フォルダ（%TEMP%\hojou-worklog\）へ保存する
-#   （形式はworklog-common.ps1参照）。30日以上更新のないものは削除する。
-#
-# 限界（必ず確認すること）：
-# - 権限確認（ツール実行の許可）の待ち時間は、作業区間から除けない。
-# - ユーザーが応答を中断した場合（Stopが起きない）、その作業区間の終了は、最後にこのhookが
-#   動いた時刻（AskUserQuestion・Write・Editの前後、worklog-record.ps1の実行時等）になる。
-# - worklog-record.ps1を実行した後の作業区間（コミット・最後の返答等）は、同じセッションで
-#   次にworklog-record.ps1を実行した時に書き込まれる。実行しないままセッションを終えた
-#   （/clear等）場合、残りの作業区間は書き込まれない。
+# 動作（hookの登録はsetup-worklog-hooks.ps1で行う）：
+# - SessionStart（セッションの開始・再開・/clear・要約の後）：
+#   - このセッションの保存内容がなければ作成する（前回書き込んだ時刻は現在時刻、会話記録の読み終えた
+#     位置は現在の会話記録の末尾）。あれば、会話記録のパスのみを更新する（パスが変わった場合は、
+#     読み終えた位置を先頭に戻す）。
+#   - セッションIDと、worklog-record.ps1の実行方法を会話へ出力する。
+#   - 保存内容は一時フォルダ（%TEMP%\hojou-worklog\）に置き（形式はworklog-common.ps1参照）、
+#     30日以上更新のないものは削除する。
+# - SessionStart以外（以前の版で登録したhook）：何もしない。
 #
 # テスト用に、環境変数HOJOU_WORKLOG_NOW（yyyy-MM-ddTHH:mm:ss）で現在時刻を指定できる。
 
@@ -70,56 +63,38 @@ function Write-SessionContext([string]$sessionId) {
     Write-Utf8Output $json
 }
 
+# 会話記録の現在の長さ（バイト）。まだなければ0
+function Get-TranscriptLength([string]$transcriptPath) {
+    if ([string]::IsNullOrEmpty($transcriptPath) -or -not (Test-Path -LiteralPath $transcriptPath -PathType Leaf)) {
+        return [long]0
+    }
+    return (Get-Item -LiteralPath $transcriptPath).Length
+}
+
 function Invoke-WorklogHook {
     $hookInput = Read-HookInput
+    if ([string]$hookInput.hook_event_name -ne "SessionStart") {
+        return
+    }
     $sessionId = [string]$hookInput.session_id
     $statePath = Get-StatePath $sessionId
     if ($null -eq $statePath) {
         return
     }
-    $eventName = [string]$hookInput.hook_event_name
-    if ($eventName -eq "SessionStart") {
-        # 再開時等に「最後にこのhookが動いた時刻」を更新すると、中断された作業区間の終了が再開時刻になるため、
-        # 作業区間の記録は変更しない
-        Write-SessionContext $sessionId
-        return
+    $transcriptPath = [string]$hookInput.transcript_path
+
+    if (Test-Path -LiteralPath $statePath) {
+        $state = Read-State $statePath
+        if (-not [string]::IsNullOrEmpty($transcriptPath) -and $transcriptPath -ne $state.transcript) {
+            $state.transcript = $transcriptPath
+            $state.offset = [long]0
+        }
+    } else {
+        $state = @{ transcript = $transcriptPath; recorded = (Get-NowText); offset = (Get-TranscriptLength $transcriptPath) }
     }
-
-    $state = Read-State $statePath
-    $nowText = Get-NowText
-    $toolName = [string]$hookInput.tool_name
-
-    switch ($eventName) {
-        "UserPromptSubmit" {
-            # 前の応答が中断されてStopが起きなかった場合は、最後にこのhookが動いた時刻で終了する
-            if ($null -ne $state.open) {
-                Close-Segment $state $state.last
-            }
-            $state.open = $nowText
-        }
-        "PreToolUse" {
-            if ($toolName -eq "AskUserQuestion") {
-                Close-Segment $state $nowText
-            }
-        }
-        "PostToolUseFailure" {
-            if ($toolName -eq "AskUserQuestion" -and $null -eq $state.open) {
-                $state.open = $nowText
-            }
-        }
-        "PostToolUse" {
-            if ($toolName -eq "AskUserQuestion" -and $null -eq $state.open) {
-                $state.open = $nowText
-            }
-        }
-        "Stop" {
-            Close-Segment $state $nowText
-        }
-    }
-    $state.last = $nowText
-
     Write-State $statePath $state
     Remove-OldState (Get-StateDir)
+    Write-SessionContext $sessionId
 }
 
 try {

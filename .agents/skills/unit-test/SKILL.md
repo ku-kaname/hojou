@@ -74,7 +74,6 @@ def test_update_review_item_004_review_item_only(mocker):
 
 ### ◆サンプル
 - 単体テスト仕様書：`references/サンプル/復習項目更新_単体テスト仕様書.md`
-- 単体テストコード：`references/サンプル/test_update_review_endpoint.py`
 
 ### ◆テンプレート
 - `references/テンプレート/単体テスト仕様書_テンプレート.md`

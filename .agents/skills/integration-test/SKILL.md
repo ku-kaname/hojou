@@ -66,7 +66,6 @@ def test_update_review_endpoint_001_update_review_item(client, make_token):
 
 ### ◆サンプル
 - 結合テスト仕様書：`references/サンプル/復習項目更新_結合テスト仕様書.md`
-- 結合テストコード：`references/サンプル/test_update_review_endpoint.py`
 
 ### ◆テンプレート
 - `references/テンプレート/結合テスト仕様書_テンプレート.md`
